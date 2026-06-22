@@ -34,9 +34,9 @@ python3 doom_steak.py
 
 Steak Doom controls:
 
-- `W/S` move forward/back
-- `A/D` turn
-- `Q/E` strafe
+- `↑/↓` or `W/S` move forward/back
+- `←/→` or `Q/E` turn left/right
+- `A/D` strafe left/right
 - `Space` throw steak sauce
 - `P` pause
 - `X` quit

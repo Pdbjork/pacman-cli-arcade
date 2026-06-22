@@ -7,12 +7,12 @@ Run:
     python3 doom_steak.py
 
 Controls:
-    W/S       move forward/back
-    A/D       turn left/right
-    Q/E       strafe left/right
-    Space     throw steak sauce
-    P         pause
-    X         quit
+    ↑/↓ or W/S    move forward/back
+    ←/→ or Q/E    turn left/right
+    A/D           strafe left/right
+    Space         throw steak sauce
+    P             pause
+    X             quit
 """
 
 import curses
@@ -64,7 +64,7 @@ class Game:
         self.hp = 100
         self.score = 0
         self.ammo = 12
-        self.msg = "Find the exit. Wolves hate steak sauce."
+        self.msg = "Find the exit. Arrow keys work. WASD works. Wolves hate steak sauce."
         self.exit = (14, 13)
         self.wolves = [
             {"x": 6.5, "y": 3.5, "hp": 2},
@@ -73,6 +73,8 @@ class Game:
             {"x": 11.5, "y": 11.5, "hp": 3},
         ]
         self.frame = 0
+        self.muzzle_flash = 0
+        self.damage_flash = 0
         self.won = False
         self.dead = False
 
@@ -122,6 +124,7 @@ class Game:
             self.msg = "Out of steak sauce!"
             return
         self.ammo -= 1
+        self.muzzle_flash = 5
         best = None
         for dist, ang, wolf in self.visible_wolves():
             if abs(ang) < 0.12:
@@ -146,6 +149,7 @@ class Game:
             dist = math.hypot(dx, dy)
             if dist < 0.65:
                 self.hp -= 7
+                self.damage_flash = 5
                 self.msg = "A wolf bites the steak!"
                 if self.hp <= 0:
                     self.dead = True
@@ -168,6 +172,10 @@ class Game:
     def update(self):
         self.frame += 1
         self.update_wolves()
+        if self.muzzle_flash:
+            self.muzzle_flash -= 1
+        if self.damage_flash:
+            self.damage_flash -= 1
         if int(self.x) == self.exit[0] and int(self.y) == self.exit[1]:
             self.won = True
             self.score += self.hp * 10 + self.ammo * 25
@@ -189,13 +197,18 @@ def init_colors():
         curses.init_pair(i, c, -1)
 
 
-def wall_glyph(dist):
+def wall_glyph(dist, row_ratio=0.5):
+    # Distance + vertical shading gives walls more depth than a flat block column.
+    if row_ratio < 0.12 or row_ratio > 0.88:
+        edge = curses.A_BOLD
+    else:
+        edge = 0
     if dist < 1.5:
         return "█", curses.color_pair(1) | curses.A_BOLD
     if dist < 3:
-        return "▓", curses.color_pair(1) | curses.A_BOLD
+        return "▓", curses.color_pair(1) | edge
     if dist < 6:
-        return "▒", curses.color_pair(2)
+        return "▒", curses.color_pair(2) | edge
     return "░", curses.color_pair(2) | curses.A_DIM
 
 
@@ -208,19 +221,34 @@ def draw_3d(stdscr, game, top, left, width, height):
         # Fish-eye correction.
         dist *= math.cos(ray_a - game.a)
         zbuf.append(dist)
-        wall_h = int(height / max(0.1, dist) * 1.15)
+        wall_h = int(height / max(0.1, dist) * 1.25)
         ceiling = horizon - wall_h // 2
         floor = horizon + wall_h // 2
-        glyph, attr = wall_glyph(dist)
         for row in range(height):
             y = top + row
             if row < ceiling - top:
-                ch, at = " ", 0
+                # Ceiling gradient.
+                if row < height * 0.20:
+                    ch, at = "'", curses.color_pair(2) | curses.A_DIM
+                elif row < height * 0.38:
+                    ch, at = ".", curses.color_pair(2) | curses.A_DIM
+                else:
+                    ch, at = " ", 0
             elif row <= floor - top:
-                ch, at = glyph, attr
+                ratio = (row - (ceiling - top)) / max(1, wall_h)
+                ch, at = wall_glyph(dist, ratio)
+                # Draw vertical seams every few projected wall columns for a brick/corridor feel.
+                if col % 7 == 0 and dist < 5:
+                    ch, at = "▌", curses.color_pair(1) | curses.A_BOLD
             else:
-                shade = "." if row < height * 0.75 else "_"
-                ch, at = shade, curses.color_pair(3) | curses.A_DIM
+                # Floor gradient.
+                depth = row / max(1, height)
+                if depth > 0.88:
+                    ch, at = "=", curses.color_pair(3) | curses.A_DIM
+                elif depth > 0.75:
+                    ch, at = "-", curses.color_pair(3) | curses.A_DIM
+                else:
+                    ch, at = ".", curses.color_pair(3) | curses.A_DIM
             stdscr.addstr(y, left + col, ch, at)
 
     # Draw wolves as billboards, farthest first.
@@ -235,8 +263,23 @@ def draw_3d(stdscr, game, top, left, width, height):
                 if top <= y < top + height and left <= x < left + width:
                     stdscr.addstr(y, x, line, curses.color_pair(5) | curses.A_BOLD)
 
-    # Crosshair.
-    stdscr.addstr(horizon, left + width // 2, "+", curses.color_pair(4) | curses.A_BOLD)
+    # Crosshair + simple weapon overlay.
+    stdscr.addstr(horizon, left + width // 2, "⊕", curses.color_pair(4) | curses.A_BOLD)
+    weapon_y = top + height - 4
+    weapon_x = left + width // 2 - 8
+    weapon = [
+        "      🥩      ",
+        "    ╭────╮    ",
+        "════╡SAUCE╞════",
+        "    ╰────╯    ",
+    ]
+    if game.muzzle_flash:
+        stdscr.addstr(horizon - 1, left + width // 2 - 1, SAUCE, curses.color_pair(7) | curses.A_BOLD)
+    for i, line in enumerate(weapon):
+        stdscr.addstr(weapon_y + i, weapon_x, line, curses.color_pair(4 if i == 0 else 7) | curses.A_BOLD)
+    if game.damage_flash:
+        stdscr.addstr(top, left, "!" * width, curses.color_pair(5) | curses.A_BOLD)
+        stdscr.addstr(top + height - 1, left, "!" * width, curses.color_pair(5) | curses.A_BOLD)
 
 
 def draw_minimap(stdscr, game, y0, x0):
@@ -270,9 +313,9 @@ def draw(stdscr, game):
     stdscr.addstr(2, 0, game.msg[:w - 1], curses.A_DIM)
     draw_3d(stdscr, game, 4, 0, 70, 22)
     draw_minimap(stdscr, game, 4, 73)
-    stdscr.addstr(21, 73, "W/S move", curses.A_DIM)
-    stdscr.addstr(22, 73, "A/D turn", curses.A_DIM)
-    stdscr.addstr(23, 73, "Q/E strafe", curses.A_DIM)
+    stdscr.addstr(21, 73, "↑/↓ or W/S move", curses.A_DIM)
+    stdscr.addstr(22, 73, "←/→ or Q/E turn", curses.A_DIM)
+    stdscr.addstr(23, 73, "A/D strafe", curses.A_DIM)
     stdscr.addstr(24, 73, "Space sauce", curses.A_DIM)
     stdscr.addstr(25, 73, "X quit", curses.A_DIM)
     stdscr.refresh()
@@ -292,7 +335,8 @@ def title(stdscr):
     for i, line in enumerate(art):
         stdscr.addstr(i + 2, 0, line, curses.color_pair(4) | curses.A_BOLD)
     stdscr.addstr(10, 0, "A first-person terminal maze shooter. You are steak. Wolves are hungry.", curses.color_pair(6))
-    stdscr.addstr(12, 0, "Press any key to start.", curses.color_pair(4) | curses.A_BOLD)
+    stdscr.addstr(12, 0, "Improved controls: arrow keys work; WASD moves/strafe; Q/E turns.", curses.A_DIM)
+    stdscr.addstr(14, 0, "Press any key to start.", curses.color_pair(4) | curses.A_BOLD)
     stdscr.refresh()
     stdscr.getch()
     stdscr.nodelay(True)
@@ -322,17 +366,17 @@ def main(stdscr):
             break
         if key in (ord("p"), ord("P")):
             pause(stdscr)
-        if key in (ord("a"), ord("A")):
+        if key in (curses.KEY_LEFT, ord("q"), ord("Q")):
             game.a -= turn_speed
-        if key in (ord("d"), ord("D")):
+        if key in (curses.KEY_RIGHT, ord("e"), ord("E")):
             game.a += turn_speed
-        if key in (ord("w"), ord("W")):
+        if key in (curses.KEY_UP, ord("w"), ord("W")):
             game.move(math.cos(game.a) * move_speed, math.sin(game.a) * move_speed)
-        if key in (ord("s"), ord("S")):
+        if key in (curses.KEY_DOWN, ord("s"), ord("S")):
             game.move(-math.cos(game.a) * move_speed, -math.sin(game.a) * move_speed)
-        if key in (ord("q"), ord("Q")):
+        if key in (ord("a"), ord("A")):
             game.move(math.cos(game.a - math.pi / 2) * move_speed, math.sin(game.a - math.pi / 2) * move_speed)
-        if key in (ord("e"), ord("E")):
+        if key in (ord("d"), ord("D")):
             game.move(math.cos(game.a + math.pi / 2) * move_speed, math.sin(game.a + math.pi / 2) * move_speed)
         if key == ord(" "):
             game.shoot()
