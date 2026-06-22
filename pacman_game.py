@@ -28,7 +28,8 @@ FRUIT = "🍒"
 STEAK = "🥩"
 WOLF = "🐺"
 SCARED_WOLF = "🐶"
-CELL_W = 3
+CELL_W = 4
+CELL_H = 2
 
 RAW_MAP = [
     "#####################",
@@ -301,7 +302,7 @@ def init_colors():
 def draw(stdscr, game):
     stdscr.erase()
     h, w = stdscr.getmaxyx()
-    needed_h, needed_w = HEIGHT + 10, WIDTH * CELL_W + 28
+    needed_h, needed_w = HEIGHT * CELL_H + 10, WIDTH * CELL_W + 28
     if h < needed_h or w < needed_w:
         stdscr.addstr(0, 0, f"Terminal too small. Need at least {needed_w}x{needed_h}.")
         stdscr.refresh()
@@ -314,24 +315,37 @@ def draw(stdscr, game):
 
     ghost_positions = {g.pos: g for g in game.ghosts}
     for r in range(HEIGHT):
-        y = r + 4
         for c in range(WIDTH):
             pos = (r, c)
-            text, attr = "  ", 0
-            if pos == game.pacman.pos:
-                text, attr = f"{STEAK} ", curses.color_pair(2) | curses.A_BOLD
+            x0 = c * CELL_W
+            y0 = 4 + r * CELL_H
+
+            # Two-line, four-column tiles make the maze feel chunky instead of text-grid flat.
+            tile = ["    ", "    "]
+            attr = 0
+            if GAME_MAP[r][c] == WALL:
+                # Add a subtle beveled brick look using top/bottom shading.
+                tile = ["████", "▓▓▓▓"]
+                attr = curses.color_pair(1) | curses.A_BOLD
+            elif pos == game.pacman.pos:
+                tile = ["    ", f" {STEAK} "]
+                attr = curses.color_pair(2) | curses.A_BOLD
             elif pos in ghost_positions:
-                color = 5 if game.frightened else 3
-                text, attr = f"{SCARED_WOLF if game.frightened else WOLF} ", curses.color_pair(color) | curses.A_BOLD
+                wolf = SCARED_WOLF if game.frightened else WOLF
+                tile = ["    ", f" {wolf} "]
+                attr = curses.color_pair(5 if game.frightened else 3) | curses.A_BOLD
             elif game.fruit == pos:
-                text, attr = f"{FRUIT} ", curses.color_pair(7) | curses.A_BOLD
+                tile = ["    ", f" {FRUIT} "]
+                attr = curses.color_pair(7) | curses.A_BOLD
             elif pos in game.power_pellets:
-                text, attr = "✦  ", curses.color_pair(5) | curses.A_BOLD
+                tile = [" ✦  ", "✦✦✦ "]
+                attr = curses.color_pair(5) | curses.A_BOLD
             elif pos in game.pellets:
-                text, attr = "·  ", curses.color_pair(4)
-            elif GAME_MAP[r][c] == WALL:
-                text, attr = "▓▓▓", curses.color_pair(1) | curses.A_BOLD
-            stdscr.addstr(y, c * CELL_W, text, attr)
+                tile = ["    ", " ·  "]
+                attr = curses.color_pair(4)
+
+            stdscr.addstr(y0, x0, tile[0], attr)
+            stdscr.addstr(y0 + 1, x0, tile[1], attr)
 
     x = WIDTH * CELL_W + 4
     stdscr.addstr(4, x, "Wolves", curses.color_pair(3) | curses.A_BOLD)
@@ -343,7 +357,7 @@ def draw(stdscr, game):
     for i, s in enumerate(game.scores[:5], 1):
         stdscr.addstr(13 + i, x, f"{i}. {s['score']:05d} L{s.get('level', 1)}", curses.A_DIM)
 
-    stdscr.addstr(HEIGHT + 5, 0, "Arrows/WASD move the 🥩 • P pause • Q quit • tunnel wraps left/right", curses.A_DIM)
+    stdscr.addstr(HEIGHT * CELL_H + 5, 0, "Arrows/WASD move the 🥩 • P pause • Q quit • tunnel wraps left/right", curses.A_DIM)
     stdscr.refresh()
 
 
@@ -373,7 +387,7 @@ def title_screen(stdscr, scores):
 
 def pause(stdscr):
     stdscr.nodelay(False)
-    stdscr.addstr(23, 0, "PAUSED — press any key to resume", curses.color_pair(7) | curses.A_BOLD)
+    stdscr.addstr(HEIGHT * CELL_H + 7, 0, "PAUSED — press any key to resume", curses.color_pair(7) | curses.A_BOLD)
     stdscr.refresh()
     stdscr.getch()
     stdscr.nodelay(True)
@@ -405,7 +419,7 @@ def main(stdscr):
             draw(stdscr, game)
             if status == "gameover":
                 stdscr.nodelay(False)
-                stdscr.addstr(HEIGHT + 6, 0, "GAME OVER — press any key", curses.color_pair(3) | curses.A_BOLD)
+                stdscr.addstr(HEIGHT * CELL_H + 6, 0, "GAME OVER — press any key", curses.color_pair(3) | curses.A_BOLD)
                 stdscr.refresh()
                 stdscr.getch()
                 break
