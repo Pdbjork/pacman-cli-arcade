@@ -18,10 +18,27 @@ You are a **T-bone steak** 🥩 trying to survive a maze full of hungry **wolves
 - Level progression
 - Persistent top-5 scoreboard in `.pacman_scores.json`
 
-## Run
+## Run Steak-Man
 
 ```bash
 python3 pacman_game.py
 ```
+
+## Run Steak Doom
+
+A first-person DOOM/Wolfenstein-style terminal maze shooter is included too:
+
+```bash
+python3 doom_steak.py
+```
+
+Steak Doom controls:
+
+- `W/S` move forward/back
+- `A/D` turn
+- `Q/E` strafe
+- `Space` throw steak sauce
+- `P` pause
+- `X` quit
 
 > Works best in a real terminal window with emoji support and enough space for the game board.
