@@ -1,6 +1,6 @@
-# Pac-Man CLI Arcade+
+# Steak-Man CLI Arcade+
 """
-Arcade-ish Pac-Man in the terminal using only Python's standard library.
+Arcade-ish Pac-Man variant: you are a T-bone steak hunted by wolves.
 
 Run:
     python3 pacman_game.py
@@ -13,15 +13,22 @@ Controls:
 
 import curses
 import json
+import locale
 import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
 
+locale.setlocale(locale.LC_ALL, "")
+
 WALL = "#"
 PELLET = "·"
 POWER = "○"
-FRUIT = "◆"
+FRUIT = "🍒"
+STEAK = "🥩"
+WOLF = "🐺"
+SCARED_WOLF = "🐶"
+CELL_W = 3
 
 RAW_MAP = [
     "#####################",
@@ -83,7 +90,7 @@ class Game:
         self.scores = self.load_scores()
         self.high_score = self.scores[0]["score"] if self.scores else 0
         self.lives = 3
-        self.message = "Ready! Ghosts now have personalities. Use the tunnel!"
+        self.message = "Ready! You are a T-bone steak. Hungry wolves are tracking you!"
         self.next_dir = (0, 1)
         self.fruit = None
         self.fruit_timer = 0
@@ -118,12 +125,12 @@ class Game:
                 elif ch == POWER:
                     self.power_pellets.add((r, c))
 
-        self.pacman = Actor(1, 1, (1, 1), (0, 1), "ᗧ")
+        self.pacman = Actor(1, 1, (1, 1), (0, 1), STEAK)
         self.ghosts = [
-            Actor(1, 18, (1, 18), symbol="ᗣ", personality="blinky"),  # direct chase
-            Actor(13, 18, (13, 18), symbol="ᗣ", personality="pinky"),  # ambush ahead
-            Actor(7, 10, (7, 10), symbol="ᗣ", personality="inky"),     # unpredictable
-            Actor(13, 1, (13, 1), symbol="ᗣ", personality="clyde"),    # shy when close
+            Actor(1, 18, (1, 18), symbol=WOLF, personality="alpha"),    # direct chase
+            Actor(13, 18, (13, 18), symbol=WOLF, personality="stalker"), # ambush ahead
+            Actor(7, 10, (7, 10), symbol=WOLF, personality="trickster"), # unpredictable
+            Actor(13, 1, (13, 1), symbol=WOLF, personality="shy"),       # backs off when close
         ]
         self.frightened = 0
         self.combo = 0
@@ -165,33 +172,33 @@ class Game:
         if p in self.pellets:
             self.pellets.remove(p)
             self.score += 10
-            self.message = "+10 crunch"
+            self.message = "+10 seasoning pellet"
         elif p in self.power_pellets:
             self.power_pellets.remove(p)
             self.score += 50
             self.frightened = 85
             self.combo = 0
-            self.message = "POWER MODE! Ghosts are edible."
+            self.message = "BUTCHER POWER! The wolves are scared."
         elif self.fruit == p:
             points = 300 + self.level * 100
             self.score += points
             self.fruit = None
             self.fruit_timer = 0
-            self.message = f"Fruit bonus! +{points}"
+            self.message = f"Cherry glaze bonus! +{points}"
 
     def maybe_spawn_fruit(self):
         if self.fruit:
             self.fruit_timer -= 1
             if self.fruit_timer <= 0:
                 self.fruit = None
-                self.message = "Fruit vanished."
+                self.message = "Cherry glaze vanished."
             return
         eaten = 154 - len(self.pellets) - len(self.power_pellets)
         if eaten > 0 and eaten % 35 == 0 and random.random() < 0.12:
             candidates = [(7, 9), (7, 11), (3, 10), (11, 10)]
             self.fruit = random.choice([p for p in candidates if self.open_cell(*p)])
             self.fruit_timer = 90
-            self.message = "Bonus fruit appeared!"
+            self.message = "Cherry glaze appeared!"
 
     def ghost_move_interval(self):
         return max(1, 3 - self.level // 2)
@@ -201,15 +208,15 @@ class Game:
         dr, dc = self.pacman.direction
         dist = abs(ghost.row - pr) + abs(ghost.col - pc)
 
-        if ghost.personality == "blinky":
+        if ghost.personality == "alpha":
             return self.pacman.pos
-        if ghost.personality == "pinky":
+        if ghost.personality == "stalker":
             return (max(0, min(HEIGHT - 1, pr + 4 * dr)), max(0, min(WIDTH - 1, pc + 4 * dc)))
-        if ghost.personality == "inky":
+        if ghost.personality == "trickster":
             if random.random() < 0.45:
                 return random.choice([(1, 1), (1, 19), (13, 1), (13, 19), self.pacman.pos])
             return (max(0, min(HEIGHT - 1, pr + 2 * dr)), max(0, min(WIDTH - 1, pc + 2 * dc)))
-        if ghost.personality == "clyde":
+        if ghost.personality == "shy":
             return (13, 1) if dist < 6 else self.pacman.pos
         return self.pacman.pos
 
@@ -249,11 +256,11 @@ class Game:
                 self.combo += 1
                 points = 200 * self.combo
                 self.score += points
-                self.message = f"Ghost eaten! +{points}"
+                self.message = f"Wolf scared off! +{points}"
                 ghost.reset()
             else:
                 self.lives -= 1
-                self.message = "Ouch! Ghost collision."
+                self.message = "CHOMP! A wolf got the steak."
                 self.pacman.reset()
                 for g in self.ghosts:
                     g.reset()
@@ -294,13 +301,13 @@ def init_colors():
 def draw(stdscr, game):
     stdscr.erase()
     h, w = stdscr.getmaxyx()
-    needed_h, needed_w = HEIGHT + 10, WIDTH * 2 + 24
+    needed_h, needed_w = HEIGHT + 10, WIDTH * CELL_W + 28
     if h < needed_h or w < needed_w:
         stdscr.addstr(0, 0, f"Terminal too small. Need at least {needed_w}x{needed_h}.")
         stdscr.refresh()
         return
 
-    stdscr.addstr(0, 0, " PAC-MAN CLI ARCADE+ ", curses.color_pair(2) | curses.A_BOLD)
+    stdscr.addstr(0, 0, " 🥩 STEAK-MAN: WOLF RUN 🐺 ", curses.color_pair(2) | curses.A_BOLD)
     hud = f" Score {game.score:05d}   High {game.high_score:05d}   Lives {'♥' * game.lives}   Level {game.level}   Power {game.frightened // 10} "
     stdscr.addstr(1, 0, hud, curses.color_pair(6) | curses.A_BOLD)
     stdscr.addstr(2, 0, game.message[:max(1, w - 1)], curses.A_DIM)
@@ -312,23 +319,23 @@ def draw(stdscr, game):
             pos = (r, c)
             text, attr = "  ", 0
             if pos == game.pacman.pos:
-                text, attr = "ᗧ ", curses.color_pair(2) | curses.A_BOLD
+                text, attr = f"{STEAK} ", curses.color_pair(2) | curses.A_BOLD
             elif pos in ghost_positions:
                 color = 5 if game.frightened else 3
-                text, attr = "ᗣ ", curses.color_pair(color) | curses.A_BOLD
+                text, attr = f"{SCARED_WOLF if game.frightened else WOLF} ", curses.color_pair(color) | curses.A_BOLD
             elif game.fruit == pos:
                 text, attr = f"{FRUIT} ", curses.color_pair(7) | curses.A_BOLD
             elif pos in game.power_pellets:
-                text, attr = "● ", curses.color_pair(5) | curses.A_BOLD
+                text, attr = "✦  ", curses.color_pair(5) | curses.A_BOLD
             elif pos in game.pellets:
-                text, attr = "· ", curses.color_pair(4)
+                text, attr = "·  ", curses.color_pair(4)
             elif GAME_MAP[r][c] == WALL:
-                text, attr = "██", curses.color_pair(1) | curses.A_BOLD
-            stdscr.addstr(y, c * 2, text, attr)
+                text, attr = "▓▓▓", curses.color_pair(1) | curses.A_BOLD
+            stdscr.addstr(y, c * CELL_W, text, attr)
 
-    x = WIDTH * 2 + 4
-    stdscr.addstr(4, x, "Ghosts", curses.color_pair(3) | curses.A_BOLD)
-    labels = [("Red", "Blinky", "chases you"), ("Pink", "Pinky", "ambushes ahead"), ("Cyan", "Inky", "unpredictable"), ("Orange", "Clyde", "shy up close")]
+    x = WIDTH * CELL_W + 4
+    stdscr.addstr(4, x, "Wolves", curses.color_pair(3) | curses.A_BOLD)
+    labels = [("Red", "Alpha", "tracks the steak"), ("Pink", "Stalker", "ambushes ahead"), ("Cyan", "Trickster", "unpredictable"), ("Orange", "Shy wolf", "backs off close")]
     for i, (_, name, note) in enumerate(labels):
         stdscr.addstr(6 + i, x, f"{name:<7} {note}", curses.A_DIM)
 
@@ -336,7 +343,7 @@ def draw(stdscr, game):
     for i, s in enumerate(game.scores[:5], 1):
         stdscr.addstr(13 + i, x, f"{i}. {s['score']:05d} L{s.get('level', 1)}", curses.A_DIM)
 
-    stdscr.addstr(HEIGHT + 5, 0, "Arrows/WASD move • P pause • Q quit • tunnel wraps left/right", curses.A_DIM)
+    stdscr.addstr(HEIGHT + 5, 0, "Arrows/WASD move the 🥩 • P pause • Q quit • tunnel wraps left/right", curses.A_DIM)
     stdscr.refresh()
 
 
@@ -344,16 +351,16 @@ def title_screen(stdscr, scores):
     stdscr.nodelay(False)
     stdscr.erase()
     art = [
-        "██████╗  █████╗  ██████╗     ███╗   ███╗ █████╗ ███╗   ██╗",
-        "██╔══██╗██╔══██╗██╔════╝     ████╗ ████║██╔══██╗████╗  ██║",
-        "██████╔╝███████║██║          ██╔████╔██║███████║██╔██╗ ██║",
-        "██╔═══╝ ██╔══██║██║          ██║╚██╔╝██║██╔══██║██║╚██╗██║",
-        "██║     ██║  ██║╚██████╗     ██║ ╚═╝ ██║██║  ██║██║ ╚████║",
-        "╚═╝     ╚═╝  ╚═╝ ╚═════╝     ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝",
+        "███████╗████████╗███████╗ █████╗ ██╗  ██╗      ███╗   ███╗ █████╗ ███╗   ██╗",
+        "██╔════╝╚══██╔══╝██╔════╝██╔══██╗██║ ██╔╝      ████╗ ████║██╔══██╗████╗  ██║",
+        "███████╗   ██║   █████╗  ███████║█████╔╝ █████╗██╔████╔██║███████║██╔██╗ ██║",
+        "╚════██║   ██║   ██╔══╝  ██╔══██║██╔═██╗ ╚════╝██║╚██╔╝██║██╔══██║██║╚██╗██║",
+        "███████║   ██║   ███████╗██║  ██║██║  ██╗      ██║ ╚═╝ ██║██║  ██║██║ ╚████║",
+        "╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝      ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝",
     ]
     for i, line in enumerate(art):
         stdscr.addstr(i + 1, 0, line, curses.color_pair(2) | curses.A_BOLD)
-    stdscr.addstr(9, 0, "New: ghost personalities, wrap tunnel, fruit bonuses, input buffering, top 5 scoreboard.", curses.color_pair(6))
+    stdscr.addstr(9, 0, "New theme: you are a T-bone steak hunted by wolves. Grab butcher power and scare them off.", curses.color_pair(6))
     if scores:
         stdscr.addstr(11, 0, "Top Scores", curses.color_pair(7) | curses.A_BOLD)
         for i, s in enumerate(scores[:5], 1):
