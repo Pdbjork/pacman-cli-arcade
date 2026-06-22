@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.pacman_scores.json
+.pacman_high_score
+.DS_Store
