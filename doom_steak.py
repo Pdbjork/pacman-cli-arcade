@@ -102,6 +102,14 @@ class Game:
             depth += step
         return MAX_DEPTH
 
+    def has_line_of_sight(self, x, y, tolerance=0.75):
+        dx, dy = x - self.x, y - self.y
+        dist = math.hypot(dx, dy)
+        if dist < 0.01:
+            return True
+        angle = math.atan2(dy, dx)
+        return self.cast(angle) + tolerance >= dist
+
     def visible_wolves(self):
         visible = []
         for wolf in self.wolves:
@@ -113,9 +121,12 @@ class Game:
             while ang > math.pi:
                 ang -= math.tau
             if abs(ang) < FOV / 2 and dist > 0.25:
-                # Occlusion check: wall must be farther than wolf.
+                # Occlusion check: wall must be farther than wolf. The tolerance is
+                # intentionally generous because emoji sprites occupy more than a
+                # mathematical point; without it wolves near corners could bite while
+                # barely failing the visibility test.
                 wall_dist = self.cast(self.a + ang)
-                if wall_dist + 0.15 >= dist:
+                if wall_dist + 0.85 >= dist:
                     visible.append((dist, ang, wolf))
         return sorted(visible, reverse=True)
 
@@ -127,7 +138,9 @@ class Game:
         self.muzzle_flash = 5
         best = None
         for dist, ang, wolf in self.visible_wolves():
-            if abs(ang) < 0.12:
+            # A slightly wider hit cone makes the terminal shooter feel fair,
+            # especially with emoji wolves that are wider than one character.
+            if abs(ang) < 0.20:
                 if best is None or dist < best[0]:
                     best = (dist, wolf)
         if best:
@@ -148,13 +161,14 @@ class Game:
             dx, dy = self.x - wolf["x"], self.y - wolf["y"]
             dist = math.hypot(dx, dy)
             if dist < 0.65:
-                self.hp -= 7
-                self.damage_flash = 5
-                self.msg = "A wolf bites the steak!"
-                if self.hp <= 0:
-                    self.dead = True
+                if self.has_line_of_sight(wolf["x"], wolf["y"], tolerance=0.95):
+                    self.hp -= 7
+                    self.damage_flash = 5
+                    self.msg = "A wolf bites the steak!"
+                    if self.hp <= 0:
+                        self.dead = True
                 continue
-            if dist < 7:
+            if dist < 7 and self.has_line_of_sight(wolf["x"], wolf["y"], tolerance=1.25):
                 speed = 0.055
                 nx = wolf["x"] + dx / dist * speed
                 ny = wolf["y"] + dy / dist * speed
@@ -255,7 +269,7 @@ def draw_3d(stdscr, game, top, left, width, height):
     for dist, ang, wolf in game.visible_wolves():
         screen_x = int(left + (ang + FOV / 2) / FOV * width)
         size = clamp(int(height / max(0.35, dist) * 0.65), 1, 5)
-        if 0 <= screen_x < left + width and dist < zbuf[clamp(screen_x - left, 0, width - 1)] + 0.5:
+        if left <= screen_x < left + width and dist < zbuf[clamp(screen_x - left, 0, width - 1)] + 0.95:
             sprite = ["🐺", "ʬʬ"] if size > 2 else ["🐺"]
             for i, line in enumerate(sprite):
                 y = horizon - size // 2 + i
