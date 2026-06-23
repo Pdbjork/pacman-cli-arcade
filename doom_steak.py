@@ -50,6 +50,8 @@ PLAYER = "🥩"
 WOLF = "🐺"
 SAUCE = "🔥"
 EXIT = "🚪"
+MEDKIT = "💚"
+AMMO = "🧴"
 
 
 def clamp(v, lo, hi):
@@ -67,10 +69,16 @@ class Game:
         self.msg = "Find the exit. Arrow keys work. WASD works. Wolves hate steak sauce."
         self.exit = (14, 13)
         self.wolves = [
-            {"x": 6.5, "y": 3.5, "hp": 2},
-            {"x": 12.5, "y": 5.5, "hp": 2},
-            {"x": 4.5, "y": 9.5, "hp": 2},
-            {"x": 11.5, "y": 11.5, "hp": 3},
+            {"x": 6.5, "y": 3.5, "hp": 2, "max_hp": 2},
+            {"x": 12.5, "y": 5.5, "hp": 2, "max_hp": 2},
+            {"x": 4.5, "y": 9.5, "hp": 2, "max_hp": 2},
+            {"x": 11.5, "y": 11.5, "hp": 3, "max_hp": 3},
+        ]
+        self.pickups = [
+            {"x": 5.5, "y": 1.5, "kind": "ammo"},
+            {"x": 13.5, "y": 3.5, "kind": "med"},
+            {"x": 6.5, "y": 9.5, "kind": "ammo"},
+            {"x": 12.5, "y": 13.5, "kind": "med"},
         ]
         self.frame = 0
         self.muzzle_flash = 0
@@ -110,24 +118,36 @@ class Game:
         angle = math.atan2(dy, dx)
         return self.cast(angle) + tolerance >= dist
 
+    def visible_point(self, x, y, tolerance=0.65):
+        dx, dy = x - self.x, y - self.y
+        dist = math.hypot(dx, dy)
+        ang = math.atan2(dy, dx) - self.a
+        while ang < -math.pi:
+            ang += math.tau
+        while ang > math.pi:
+            ang -= math.tau
+        if abs(ang) >= FOV / 2 or dist <= 0.25:
+            return None
+        if self.cast(self.a + ang) + tolerance >= dist:
+            return dist, ang
+        return None
+
     def visible_wolves(self):
         visible = []
         for wolf in self.wolves:
-            dx, dy = wolf["x"] - self.x, wolf["y"] - self.y
-            dist = math.hypot(dx, dy)
-            ang = math.atan2(dy, dx) - self.a
-            while ang < -math.pi:
-                ang += math.tau
-            while ang > math.pi:
-                ang -= math.tau
-            if abs(ang) < FOV / 2 and dist > 0.25:
-                # Occlusion check: wall must be farther than wolf. The tolerance is
-                # intentionally generous because emoji sprites occupy more than a
-                # mathematical point; without it wolves near corners could bite while
-                # barely failing the visibility test.
-                wall_dist = self.cast(self.a + ang)
-                if wall_dist + 0.85 >= dist:
-                    visible.append((dist, ang, wolf))
+            seen = self.visible_point(wolf["x"], wolf["y"], tolerance=0.85)
+            if seen:
+                dist, ang = seen
+                visible.append((dist, ang, wolf))
+        return sorted(visible, reverse=True)
+
+    def visible_pickups(self):
+        visible = []
+        for pickup in self.pickups:
+            seen = self.visible_point(pickup["x"], pickup["y"], tolerance=0.35)
+            if seen:
+                dist, ang = seen
+                visible.append((dist, ang, pickup))
         return sorted(visible, reverse=True)
 
     def shoot(self):
@@ -183,8 +203,22 @@ class Game:
                 if not self.wall(nx, ny):
                     wolf["x"], wolf["y"] = nx, ny
 
+    def collect_pickups(self):
+        for pickup in list(self.pickups):
+            if math.hypot(pickup["x"] - self.x, pickup["y"] - self.y) < 0.65:
+                self.pickups.remove(pickup)
+                if pickup["kind"] == "ammo":
+                    self.ammo += 6
+                    self.score += 50
+                    self.msg = "Picked up steak sauce! +6 ammo"
+                else:
+                    self.hp = min(100, self.hp + 30)
+                    self.score += 50
+                    self.msg = "Ate garnish. +30 HP"
+
     def update(self):
         self.frame += 1
+        self.collect_pickups()
         self.update_wolves()
         if self.muzzle_flash:
             self.muzzle_flash -= 1
@@ -265,17 +299,34 @@ def draw_3d(stdscr, game, top, left, width, height):
                     ch, at = ".", curses.color_pair(3) | curses.A_DIM
             stdscr.addstr(y, left + col, ch, at)
 
-    # Draw wolves as billboards, farthest first.
-    for dist, ang, wolf in game.visible_wolves():
+    def billboard(dist, ang, sprite, attr, y_bias=0, occlusion=0.75):
         screen_x = int(left + (ang + FOV / 2) / FOV * width)
-        size = clamp(int(height / max(0.35, dist) * 0.65), 1, 5)
-        if left <= screen_x < left + width and dist < zbuf[clamp(screen_x - left, 0, width - 1)] + 0.95:
-            sprite = ["🐺", "ʬʬ"] if size > 2 else ["🐺"]
+        if left <= screen_x < left + width and dist < zbuf[clamp(screen_x - left, 0, width - 1)] + occlusion:
+            size = clamp(int(height / max(0.35, dist) * 0.65), 1, 6)
             for i, line in enumerate(sprite):
-                y = horizon - size // 2 + i
+                y = horizon - size // 2 + i + y_bias
                 x = screen_x - len(line) // 2
                 if top <= y < top + height and left <= x < left + width:
-                    stdscr.addstr(y, x, line, curses.color_pair(5) | curses.A_BOLD)
+                    stdscr.addstr(y, x, line, attr)
+
+    # Draw exit beacon, pickups, then wolves as billboards, farthest first.
+    exit_seen = game.visible_point(game.exit[0] + 0.5, game.exit[1] + 0.5, tolerance=0.5)
+    if exit_seen:
+        billboard(exit_seen[0], exit_seen[1], ["🚪", "EXIT"], curses.color_pair(6) | curses.A_BOLD, occlusion=0.5)
+
+    for dist, ang, pickup in game.visible_pickups():
+        icon = AMMO if pickup["kind"] == "ammo" else MEDKIT
+        billboard(dist, ang, [icon], curses.color_pair(6 if pickup["kind"] == "med" else 7) | curses.A_BOLD, y_bias=2, occlusion=0.45)
+
+    for dist, ang, wolf in game.visible_wolves():
+        hp_bar = "▰" * wolf["hp"] + "▱" * (wolf["max_hp"] - wolf["hp"])
+        if dist < 2.2:
+            sprite = [hp_bar, "🐺🐺", " ╱╲ "]
+        elif dist < 4.5:
+            sprite = [hp_bar, "🐺", "ʬʬ"]
+        else:
+            sprite = ["🐺"]
+        billboard(dist, ang, sprite, curses.color_pair(5) | curses.A_BOLD, occlusion=0.95)
 
     # Crosshair + simple weapon overlay.
     stdscr.addstr(horizon, left + width // 2, "⊕", curses.color_pair(4) | curses.A_BOLD)
@@ -306,6 +357,9 @@ def draw_minimap(stdscr, game, y0, x0):
                 out, attr = EXIT, curses.color_pair(6) | curses.A_BOLD
             elif any(int(w["x"]) == x and int(w["y"]) == y for w in game.wolves):
                 out, attr = WOLF, curses.color_pair(5) | curses.A_BOLD
+            elif any(int(p["x"]) == x and int(p["y"]) == y for p in game.pickups):
+                pickup = next(p for p in game.pickups if int(p["x"]) == x and int(p["y"]) == y)
+                out, attr = (AMMO if pickup["kind"] == "ammo" else MEDKIT), curses.color_pair(7 if pickup["kind"] == "ammo" else 6) | curses.A_BOLD
             elif ch == "#":
                 out, attr = "█", curses.color_pair(1)
             else:
@@ -322,7 +376,11 @@ def draw(stdscr, game):
         return
 
     stdscr.addstr(0, 0, "🥩 STEAK DOOM: WOLFENSTEAK 3D 🐺", curses.color_pair(4) | curses.A_BOLD)
-    hud = f"HP {game.hp:03d}  Sauce {game.ammo:02d}  Wolves {len(game.wolves)}  Score {game.score:05d}"
+    dirs = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
+    facing = dirs[int(((game.a % math.tau) / math.tau) * 8 + 0.5) % 8]
+    exit_dx, exit_dy = game.exit[0] + 0.5 - game.x, game.exit[1] + 0.5 - game.y
+    exit_dist = math.hypot(exit_dx, exit_dy)
+    hud = f"HP {game.hp:03d}  Sauce {game.ammo:02d}  Wolves {len(game.wolves)}  Pickups {len(game.pickups)}  Facing {facing}  Exit {exit_dist:04.1f}  Score {game.score:05d}"
     stdscr.addstr(1, 0, hud, curses.color_pair(6) | curses.A_BOLD)
     stdscr.addstr(2, 0, game.msg[:w - 1], curses.A_DIM)
     draw_3d(stdscr, game, 4, 0, 70, 22)
@@ -332,6 +390,8 @@ def draw(stdscr, game):
     stdscr.addstr(23, 73, "A/D strafe", curses.A_DIM)
     stdscr.addstr(24, 73, "Space sauce", curses.A_DIM)
     stdscr.addstr(25, 73, "X quit", curses.A_DIM)
+    stdscr.addstr(27, 73, f"{AMMO} sauce refill", curses.color_pair(7) | curses.A_BOLD)
+    stdscr.addstr(28, 73, f"{MEDKIT} garnish heals", curses.color_pair(6) | curses.A_BOLD)
     stdscr.refresh()
 
 
