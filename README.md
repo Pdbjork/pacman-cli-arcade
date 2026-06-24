@@ -26,7 +26,7 @@ python3 pacman_game.py
 
 ## Run Steak Doom
 
-A first-person DOOM/Wolfenstein-style terminal maze shooter is included too, with raycast corridors, wolf health bars, visible pickups, an exit beacon, and a minimap:
+A first-person DOOM/Wolfenstein-style terminal maze shooter is included too, with raycast corridors, wolf health bars, visible pickups, an exit beacon, fog-of-war minimap, hot sauce rage mode, and wolf proximity warnings:
 
 ```bash
 python3 doom_steak.py
@@ -38,6 +38,7 @@ Steak Doom controls:
 - `←/→` or `Q/E` turn left/right
 - `A/D` strafe left/right
 - `Space` throw steak sauce
+- `M` toggle full/fog minimap
 - `P` pause
 - `X` quit
 

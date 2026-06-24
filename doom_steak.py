@@ -11,6 +11,7 @@ Controls:
     ←/→ or Q/E    turn left/right
     A/D           strafe left/right
     Space         throw steak sauce
+    M             toggle full/fog minimap
     P             pause
     X             quit
 """
@@ -52,6 +53,7 @@ SAUCE = "🔥"
 EXIT = "🚪"
 MEDKIT = "💚"
 AMMO = "🧴"
+HOTSAUCE = "🌶️"
 
 
 def clamp(v, lo, hi):
@@ -78,11 +80,16 @@ class Game:
             {"x": 5.5, "y": 1.5, "kind": "ammo"},
             {"x": 13.5, "y": 3.5, "kind": "med"},
             {"x": 6.5, "y": 9.5, "kind": "ammo"},
+            {"x": 8.5, "y": 11.5, "kind": "hot"},
             {"x": 12.5, "y": 13.5, "kind": "med"},
         ]
         self.frame = 0
         self.muzzle_flash = 0
         self.damage_flash = 0
+        self.power_timer = 0
+        self.shot_cooldown = 0
+        self.show_full_map = False
+        self.visited = {(int(self.x), int(self.y))}
         self.won = False
         self.dead = False
 
@@ -98,6 +105,7 @@ class Game:
             self.x = nx
         if not self.wall(self.x, ny):
             self.y = ny
+        self.visited.add((int(self.x), int(self.y)))
 
     def cast(self, angle):
         step = 0.035
@@ -151,11 +159,14 @@ class Game:
         return sorted(visible, reverse=True)
 
     def shoot(self):
+        if self.shot_cooldown:
+            return
         if self.ammo <= 0:
             self.msg = "Out of steak sauce!"
             return
         self.ammo -= 1
         self.muzzle_flash = 5
+        self.shot_cooldown = 8
         best = None
         for dist, ang, wolf in self.visible_wolves():
             # A slightly wider hit cone makes the terminal shooter feel fair,
@@ -165,8 +176,9 @@ class Game:
                     best = (dist, wolf)
         if best:
             _, wolf = best
-            wolf["hp"] -= 1
-            self.msg = "Sauce hit!"
+            damage = 2 if self.power_timer else 1
+            wolf["hp"] -= damage
+            self.msg = "Inferno sauce hit!" if self.power_timer else "Sauce hit!"
             if wolf["hp"] <= 0:
                 self.wolves.remove(wolf)
                 self.score += 250
@@ -182,16 +194,19 @@ class Game:
             dist = math.hypot(dx, dy)
             if dist < 0.65:
                 if self.has_line_of_sight(wolf["x"], wolf["y"], tolerance=0.95):
-                    self.hp -= 7
+                    bite = 4 if self.power_timer else 7
+                    self.hp -= bite
                     self.damage_flash = 5
-                    self.msg = "A wolf bites the steak!"
+                    self.msg = "A singed wolf nips you!" if self.power_timer else "A wolf bites the steak!"
                     if self.hp <= 0:
                         self.dead = True
                 continue
             if dist < 7 and self.has_line_of_sight(wolf["x"], wolf["y"], tolerance=1.25):
-                speed = 0.055
-                nx = wolf["x"] + dx / dist * speed
-                ny = wolf["y"] + dy / dist * speed
+                speed = 0.035 if self.power_timer else 0.055
+                # Hot sauce power makes wolves back away instead of charging.
+                direction = -1 if self.power_timer and dist < 4.5 else 1
+                nx = wolf["x"] + direction * dx / dist * speed
+                ny = wolf["y"] + direction * dy / dist * speed
                 if not self.wall(nx, wolf["y"]):
                     wolf["x"] = nx
                 if not self.wall(wolf["x"], ny):
@@ -211,6 +226,10 @@ class Game:
                     self.ammo += 6
                     self.score += 50
                     self.msg = "Picked up steak sauce! +6 ammo"
+                elif pickup["kind"] == "hot":
+                    self.power_timer = 360
+                    self.score += 100
+                    self.msg = "HOT SAUCE RAGE! Shots hit harder and wolves retreat."
                 else:
                     self.hp = min(100, self.hp + 30)
                     self.score += 50
@@ -224,6 +243,10 @@ class Game:
             self.muzzle_flash -= 1
         if self.damage_flash:
             self.damage_flash -= 1
+        if self.power_timer:
+            self.power_timer -= 1
+        if self.shot_cooldown:
+            self.shot_cooldown -= 1
         if int(self.x) == self.exit[0] and int(self.y) == self.exit[1]:
             self.won = True
             self.score += self.hp * 10 + self.ammo * 25
@@ -315,8 +338,9 @@ def draw_3d(stdscr, game, top, left, width, height):
         billboard(exit_seen[0], exit_seen[1], ["🚪", "EXIT"], curses.color_pair(6) | curses.A_BOLD, occlusion=0.5)
 
     for dist, ang, pickup in game.visible_pickups():
-        icon = AMMO if pickup["kind"] == "ammo" else MEDKIT
-        billboard(dist, ang, [icon], curses.color_pair(6 if pickup["kind"] == "med" else 7) | curses.A_BOLD, y_bias=2, occlusion=0.45)
+        icon = AMMO if pickup["kind"] == "ammo" else HOTSAUCE if pickup["kind"] == "hot" else MEDKIT
+        color = 5 if pickup["kind"] == "hot" else 6 if pickup["kind"] == "med" else 7
+        billboard(dist, ang, [icon], curses.color_pair(color) | curses.A_BOLD, y_bias=2, occlusion=0.45)
 
     for dist, ang, wolf in game.visible_wolves():
         hp_bar = "▰" * wolf["hp"] + "▱" * (wolf["max_hp"] - wolf["hp"])
@@ -351,7 +375,10 @@ def draw_minimap(stdscr, game, y0, x0):
     for y, row in enumerate(MAP):
         for x, ch in enumerate(row):
             pos = (x, y)
-            if int(game.x) == x and int(game.y) == y:
+            known = game.show_full_map or pos in game.visited or math.hypot(game.x - x, game.y - y) < 2.2
+            if not known:
+                out, attr = " ", 0
+            elif int(game.x) == x and int(game.y) == y:
                 out, attr = PLAYER, curses.color_pair(4) | curses.A_BOLD
             elif pos == game.exit:
                 out, attr = EXIT, curses.color_pair(6) | curses.A_BOLD
@@ -359,7 +386,9 @@ def draw_minimap(stdscr, game, y0, x0):
                 out, attr = WOLF, curses.color_pair(5) | curses.A_BOLD
             elif any(int(p["x"]) == x and int(p["y"]) == y for p in game.pickups):
                 pickup = next(p for p in game.pickups if int(p["x"]) == x and int(p["y"]) == y)
-                out, attr = (AMMO if pickup["kind"] == "ammo" else MEDKIT), curses.color_pair(7 if pickup["kind"] == "ammo" else 6) | curses.A_BOLD
+                icon = AMMO if pickup["kind"] == "ammo" else HOTSAUCE if pickup["kind"] == "hot" else MEDKIT
+                color = 7 if pickup["kind"] == "ammo" else 5 if pickup["kind"] == "hot" else 6
+                out, attr = icon, curses.color_pair(color) | curses.A_BOLD
             elif ch == "#":
                 out, attr = "█", curses.color_pair(1)
             else:
@@ -380,8 +409,11 @@ def draw(stdscr, game):
     facing = dirs[int(((game.a % math.tau) / math.tau) * 8 + 0.5) % 8]
     exit_dx, exit_dy = game.exit[0] + 0.5 - game.x, game.exit[1] + 0.5 - game.y
     exit_dist = math.hypot(exit_dx, exit_dy)
-    hud = f"HP {game.hp:03d}  Sauce {game.ammo:02d}  Wolves {len(game.wolves)}  Pickups {len(game.pickups)}  Facing {facing}  Exit {exit_dist:04.1f}  Score {game.score:05d}"
-    stdscr.addstr(1, 0, hud, curses.color_pair(6) | curses.A_BOLD)
+    nearest_wolf = min((math.hypot(wolf["x"] - game.x, wolf["y"] - game.y) for wolf in game.wolves), default=99)
+    danger = "  ⚠️ WOLF CLOSE" if nearest_wolf < 2.5 else ""
+    power = f"  HOT {game.power_timer // 10:02d}" if game.power_timer else ""
+    hud = f"HP {game.hp:03d}  Sauce {game.ammo:02d}  Wolves {len(game.wolves)}  Pickups {len(game.pickups)}  Facing {facing}  Exit {exit_dist:04.1f}  Score {game.score:05d}{power}{danger}"
+    stdscr.addstr(1, 0, hud[:w - 1], curses.color_pair(5 if danger else 6) | curses.A_BOLD)
     stdscr.addstr(2, 0, game.msg[:w - 1], curses.A_DIM)
     draw_3d(stdscr, game, 4, 0, 70, 22)
     draw_minimap(stdscr, game, 4, 73)
@@ -389,9 +421,10 @@ def draw(stdscr, game):
     stdscr.addstr(22, 73, "←/→ or Q/E turn", curses.A_DIM)
     stdscr.addstr(23, 73, "A/D strafe", curses.A_DIM)
     stdscr.addstr(24, 73, "Space sauce", curses.A_DIM)
-    stdscr.addstr(25, 73, "X quit", curses.A_DIM)
+    stdscr.addstr(25, 73, "M map • X quit", curses.A_DIM)
     stdscr.addstr(27, 73, f"{AMMO} sauce refill", curses.color_pair(7) | curses.A_BOLD)
     stdscr.addstr(28, 73, f"{MEDKIT} garnish heals", curses.color_pair(6) | curses.A_BOLD)
+    stdscr.addstr(29, 73, f"{HOTSAUCE} rage mode", curses.color_pair(5) | curses.A_BOLD)
     stdscr.refresh()
 
 
@@ -409,8 +442,9 @@ def title(stdscr):
     for i, line in enumerate(art):
         stdscr.addstr(i + 2, 0, line, curses.color_pair(4) | curses.A_BOLD)
     stdscr.addstr(10, 0, "A first-person terminal maze shooter. You are steak. Wolves are hungry.", curses.color_pair(6))
-    stdscr.addstr(12, 0, "Improved controls: arrow keys work; WASD moves/strafe; Q/E turns.", curses.A_DIM)
-    stdscr.addstr(14, 0, "Press any key to start.", curses.color_pair(4) | curses.A_BOLD)
+    stdscr.addstr(12, 0, "Improved controls: arrow keys work; WASD moves/strafe; Q/E turns; M toggles the map.", curses.A_DIM)
+    stdscr.addstr(13, 0, "New: fog-of-war minimap, hot sauce rage, wolf proximity warning, fire-rate cooldown.", curses.A_DIM)
+    stdscr.addstr(15, 0, "Press any key to start.", curses.color_pair(4) | curses.A_BOLD)
     stdscr.refresh()
     stdscr.getch()
     stdscr.nodelay(True)
@@ -440,6 +474,9 @@ def main(stdscr):
             break
         if key in (ord("p"), ord("P")):
             pause(stdscr)
+        if key in (ord("m"), ord("M")):
+            game.show_full_map = not game.show_full_map
+            game.msg = "Full automap enabled." if game.show_full_map else "Fog-of-war minimap enabled."
         if key in (curses.KEY_LEFT, ord("q"), ord("Q")):
             game.a -= turn_speed
         if key in (curses.KEY_RIGHT, ord("e"), ord("E")):
